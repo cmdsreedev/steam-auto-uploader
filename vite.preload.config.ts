@@ -5,7 +5,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        entryFileNames: 'preload.js',
+        entryFileNames: 'preload/index.js',
       },
     },
   },

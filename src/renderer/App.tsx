@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { VideoFile, Settings, FileStatus } from '../shared/types';
+import type { VideoFile, Settings } from '../shared/types';
 import MainPage from './components/MainPage';
 import SettingsPage from './components/SettingsPage';
+import TidyingPopup from './components/TidyingPopup';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,10 @@ export default function App() {
 
   // Load settings on mount, then scan the folder
   useEffect(() => {
+    if (!window.api || typeof window.api.loadSettings !== 'function') {
+      setLoading(false);
+      return;
+    }
     window.api.loadSettings().then((saved) => {
       setSettings(saved);
       return saved.recordingFolder
@@ -61,6 +66,16 @@ export default function App() {
     }
   }, []);
 
+  const [tidying, setTidying] = useState(false);
+
+  // Handler for close button
+  const handleClose = () => {
+    setTidying(true);
+    window.electronAPI.closeWindow();
+    // Optionally hide popup after a delay if needed
+    // setTimeout(() => setTidying(false), 3000);
+  };
+
   const pageContent = page === 'settings' ? (
     <SettingsPage
       settings={settings}
@@ -80,20 +95,23 @@ export default function App() {
   return (
     <>
       <div className="bar">
-        <div className="title-bar-content" style={{ WebkitAppRegion: 'drag' as any }}>
+        <div className="title-bar-content" style={{ WebkitAppRegion: 'drag' }}>
           <span className="title">Steam Auto Uploader</span>
         </div>
-        <div className="title-bar-buttons" style={{ WebkitAppRegion: 'no-drag' as any }}>
+        <div className="title-bar-buttons" style={{ WebkitAppRegion: 'no-drag' }}>
           <button id="min-btn" className="title-bar-button" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
           <button id="max-btn" className="title-bar-button" onClick={() => window.electronAPI.maximizeWindow()}>□</button>
-          <button id="close-btn" className="title-bar-button close" onClick={() => window.electronAPI.closeWindow()}>✕</button>
+          <button id="close-btn" className="title-bar-button close" onClick={handleClose}>✕</button>
         </div>
       </div>
-      <div className="action-bar" style={{ WebkitAppRegion: 'no-drag' as any }}>
-        <button id="refresh-btn" className="action-button" title="Refresh" onClick={refresh}>⟳</button>
-        <button id="settings-btn" className="action-button" title="Settings" onClick={() => setPage('settings')}>⚙</button>
-      </div>
+      {page !== 'settings' && (
+        <div className="action-bar" style={{ WebkitAppRegion: 'no-drag' }}>
+          <button id="refresh-btn" className="action-button" title="Refresh" onClick={refresh}>⟳</button>
+          <button id="settings-btn" className="action-button" title="Settings" onClick={() => setPage('settings')}>⚙</button>
+        </div>
+      )}
       {pageContent}
+      {tidying && <TidyingPopup />}
     </>
   );
 }

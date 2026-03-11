@@ -4,13 +4,14 @@ const STATUS_LABEL: Record<FileStatus, string> = {
   waiting: 'Waiting',
   converting: 'Converting',
   uploading: 'Uploading',
-  done: 'Done',
+  done: 'Processed',
   error: 'Error',
 };
 
-export default function StatusBadge({ status }: { status: FileStatus }) {
+export default function StatusBadge({ status, errorMessage }: { status: FileStatus, errorMessage?: string }) {
+  const tooltip = status === 'error' && errorMessage ? errorMessage : undefined;
   return (
-    <span className={`badge badge-${status}`}>
+    <span className={`badge badge-${status}`} title={tooltip} style={tooltip ? { cursor: 'help' } : {}}>
       <span className="badge-dot" />
       {STATUS_LABEL[status]}
     </span>
