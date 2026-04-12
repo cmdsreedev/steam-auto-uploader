@@ -52,6 +52,13 @@ export default function App() {
     });
   }, [settings.recordingFolder]);
 
+  // Silent background refresh — updates file list without showing the loading state
+  // Used by progress polling when a job completes, so the list doesn't flash
+  const silentRefresh = useCallback(() => {
+    if (!settings.recordingFolder) return;
+    window.api.scanFiles(settings.recordingFolder).then(setFiles);
+  }, [settings.recordingFolder]);
+
   // Re-scan whenever the folder changes after saving settings
   const handleSaveSettings = useCallback((updated: Settings) => {
     setSettings(updated);
@@ -88,7 +95,9 @@ export default function App() {
       folder={settings.recordingFolder}
       loading={loading}
       onRefresh={refresh}
+      onSilentRefresh={silentRefresh}
       onOpenSettings={() => setPage('settings')}
+      gpuEncoder={settings.gpuEncoder}
     />
   );
 

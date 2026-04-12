@@ -1,263 +1,393 @@
-  import React, { useState, useEffect } from 'react';
-  import type { VideoFile } from '../../shared/types';
-  import { IconFolder, IconUpload, IconRefresh, IconFilm } from './Icons';
-  import { IconAbort } from './Icons';
-  import StatusBadge from './StatusBadge';
-  import ProgressCell from './ProgressCell';
-  import ProcessedActionsMenu from './ProcessedActionsMenu';
-  import VideoPreview from './VideoPreview';
+import React, { useState, useEffect } from 'react';
+import type { VideoFile } from '../../shared/types';
+import { IconUpload, IconRefresh, IconFilm } from './Icons';
+import { IconAbort } from './Icons';
+import ProcessedActionsMenu from './ProcessedActionsMenu';
+import VideoPreview from './VideoPreview';
 
-  type Tab = 'recordings' | 'processed';
+const IconProcess = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="5 3 19 12 5 21 5 3"/>
+  </svg>
+);
 
-  const IconProcess = () => (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="5 3 19 12 5 21 5 3"/>
-    </svg>
-  );
+const IconPlay = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="white" stroke="none">
+    <polygon points="6 3 20 12 6 21 6 3"/>
+  </svg>
+);
 
-  const IconPlay = () => (
-    <svg className="thumb-play" width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none">
-      <polygon points="6 3 20 12 6 21 6 3"/>
-    </svg>
-  );
+const VC_STATUS_LABEL: Record<string, string> = {
+  waiting: 'Ready',
+  converting: 'Processing',
+  paused: 'Paused',
+  uploading: 'Uploading',
+  done: 'Processed',
+  error: 'Error',
+};
 
-  export default function MainPage({ files, folder, loading, onRefresh, onOpenSettings }: {
-    files: VideoFile[];
-    folder: string;
-    loading: boolean;
-    onRefresh: () => void;
-    onOpenSettings: () => void;
-  }) {
-    const [tab, setTab] = useState<Tab>('recordings');
-    // Removed gameNames cache, now use VideoFile.thumbnailUrl directly
-    const [previewFile, setPreviewFile] = useState<VideoFile | null>(null);
-    const [conversionProgress, setConversionProgress] = useState<Record<string, number>>({});
+export default function MainPage({ files, folder, loading, onRefresh, onSilentRefresh, onOpenSettings, gpuEncoder }: {
+  files: VideoFile[];
+  folder: string;
+  loading: boolean;
+  onRefresh: () => void;
+  onSilentRefresh: () => void;
+  onOpenSettings: () => void;
+  gpuEncoder?: string;
+}) {
+  const [previewFile, setPreviewFile] = useState<VideoFile | null>(null);
+  const [conversionProgress, setConversionProgress] = useState<Record<string, number>>({});
 
-    const recordings = files;
-    const processed = files.filter(f => f.convertedPath);
-    const displayFiles = tab === 'recordings' ? recordings : processed;
+  const displayFiles = files;
 
-    const getGameName = (file: VideoFile) => file.game;
-    const getThumbnail = (file: VideoFile) => {
-      // Show placeholder if thumbnail is missing or empty
-      if (!file.thumbnailUrl) return '/assets/steam-placeholder.png';
-      return file.thumbnailUrl;
-    };
+  const getGameName = (file: VideoFile) => file.game;
 
-    const handleUploadClick = async (file: VideoFile) => {
-      if (!file.convertedPath) return;
-      try {
-        await window.api.startUpload(file.id);
-        onRefresh();
-      } catch (error) {
-        alert('Failed to upload file: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      }
-    };
+  const formatRecordingDate = (ms: number) => {
+    const d = new Date(ms);
+    const date = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return `${date} · ${time}`;
+  };
 
-    const handleConvertClick = async (file: VideoFile) => {
-      if (file.status === 'converting') {
-        console.log('Conversion already in progress');
-        return;
-      }
-      try {
-        await window.api.startConversion(file.id, file.mpdPath);
-        onRefresh();
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        if (errorMessage.includes('already exists')) {
-          const action = window.confirm(
-            `A converted video already exists for this recording.\n\nPress OK to replace the file, or Cancel to skip conversion and mark as processed.`
-          );
-          if (action) {
-            try {
-              await window.api.startConversionForce(file.id, file.mpdPath);
-              onRefresh();
-            } catch (forceError) {
-              alert(`Force conversion failed: ${forceError instanceof Error ? forceError.message : 'Unknown error'}`);
-            }
-          } else {
-            await window.api.updateSessionStatus(file.id, 'done', { convertedPath: file.convertedPath });
+  const getThumbnail = (file: VideoFile) => {
+    if (!file.thumbnailUrl) return '/assets/steam-placeholder.png';
+    return file.thumbnailUrl;
+  };
+
+  const handleUploadClick = async (file: VideoFile) => {
+    if (!file.convertedPath) return;
+    try {
+      const title = `${file.game} - ${formatRecordingDate(file.modifiedAt)}`;
+      const description = [
+        `Game: ${file.game}`,
+        `Duration: ${file.duration}`,
+        `Resolution: ${file.resolution}`,
+        '',
+        'Recorded with Steam and uploaded with Steam Auto Uploader.',
+      ].join('\n');
+      await window.api.startUpload(file.id, file.convertedPath, title, description);
+      onRefresh();
+    } catch (error) {
+      alert('Failed to upload: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
+
+  const handleConvertClick = async (file: VideoFile) => {
+    if (file.status === 'converting') return;
+    try {
+      await window.api.startConversion(file.id, file.mpdPath);
+      onRefresh();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMessage.includes('already exists')) {
+        const action = window.confirm(
+          `A converted video already exists.\n\nOK to replace the file, or Cancel to mark as processed.`
+        );
+        if (action) {
+          try {
+            await window.api.startConversionForce(file.id, file.mpdPath);
             onRefresh();
+          } catch (forceError) {
+            alert(`Force conversion failed: ${forceError instanceof Error ? forceError.message : 'Unknown error'}`);
           }
         } else {
-          alert(`Conversion failed: ${errorMessage}`);
+          await window.api.updateSessionStatus(file.id, 'done', { convertedPath: file.convertedPath });
+          onRefresh();
         }
+      } else {
+        alert(`Conversion failed: ${errorMessage}`);
       }
-    };
+    }
+  };
 
-    const handleCancelConversion = async (file: VideoFile) => {
-      const confirmed = window.confirm('Abort conversion? This will delete any partially generated file.');
-      if (!confirmed) return;
-      try {
-        await window.api.cancelConversion(file.id);
-        onRefresh();
-      } catch (error) {
-        alert(`Failed to cancel conversion: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    };
+  const handleCancelConversion = async (file: VideoFile) => {
+    const confirmed = window.confirm('Abort conversion? This will delete any partially generated file.');
+    if (!confirmed) return;
+    try {
+      await window.api.cancelConversion(file.id);
+      onRefresh();
+    } catch (error) {
+      alert(`Failed to abort: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
 
-    const handleDeleteProcessed = async (file: VideoFile) => {
-      if (!file.convertedPath) return;
-      const confirmed = window.confirm('Delete the processed video file? This cannot be undone.');
-      if (!confirmed) return;
-      try {
-        await window.api.deleteProcessedFile(file.id, file.convertedPath);
-        onRefresh();
-      } catch (error) {
-        alert('Failed to delete processed file: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      }
-    };
+  const handlePauseConversion = async (file: VideoFile) => {
+    try {
+      await window.api.pauseConversion(file.id);
+      onRefresh();
+    } catch (error) {
+      alert(`Failed to pause: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
 
-    const handleShowDetails = (file: VideoFile) => {
-      const specs = `Resolution: ${file.resolution}\nDuration: ${file.duration}\nCodec: ${file.codec}`;
-      window.alert(`Processed file location:\n${file.convertedPath}\n\nVideo specs:\n${specs}`);
-    };
+  const handleResumeConversion = async (file: VideoFile) => {
+    try {
+      await window.api.resumeConversion(file.id, file.mpdPath);
+      onRefresh();
+    } catch (error) {
+      alert(`Failed to resume: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
 
-    return (
-      <div className="app">
-        <div className="main-content">
-          <div className="toolbar">
-            <div className="toolbar-left">
-              <IconFolder />
-              <span className="folder-path">
-                {folder || 'No folder configured — open Settings to set one'}
-              </span>
-            </div>
-            {/* Removed Clear DB button from toolbar-right */}
-          </div>
+  const handleDeleteProcessed = async (file: VideoFile) => {
+    if (!file.convertedPath) return;
+    const confirmed = window.confirm('Delete the processed video file? This cannot be undone.');
+    if (!confirmed) return;
+    try {
+      await window.api.deleteProcessedFile(file.id, file.convertedPath);
+      onRefresh();
+    } catch (error) {
+      alert('Failed to delete: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    }
+  };
 
-          <div className="tabs">
-            <button
-              className={`tab ${tab === 'recordings' ? 'tab-active' : ''}`}
-              onClick={() => setTab('recordings')}
-            >
-              Recordings ({recordings.length})
-            </button>
-            <button
-              className={`tab ${tab === 'processed' ? 'tab-active' : ''}`}
-              onClick={() => setTab('processed')}
-            >
-              Processed ({processed.length})
-            </button>
-          </div>
+  const handleShowDetails = (file: VideoFile) => {
+    const specs = `Resolution: ${file.resolution}\nDuration: ${file.duration}\nCodec: ${file.codec}`;
+    window.alert(`Processed file:\n${file.convertedPath}\n\nSpecs:\n${specs}`);
+  };
 
-          <div className="table-wrapper">
-            {loading ? (
-              <div className="empty-state">
-                <p style={{ color: 'var(--text-muted)' }}>Scanning folder...</p>
+  // Poll progress for active jobs every second — only updates the progress bar,
+  // never triggers a full list re-scan so the list never flickers.
+  // When a job finishes (isActive=false) we do a single silent refresh to pick up the status change.
+  useEffect(() => {
+    const activeFiles = files.filter(f => f.status === 'converting' || f.status === 'uploading');
+    if (activeFiles.length === 0) return;
+
+    const interval = setInterval(async () => {
+      const updates: Record<string, number> = {};
+      let jobFinished = false;
+
+      await Promise.all(activeFiles.map(async (file) => {
+        try {
+          const result = await window.api.getConversionProgress(file.id);
+          updates[file.id] = result.progress;
+          if (!result.isActive) jobFinished = true;
+        } catch {
+          // ignore transient errors
+        }
+      }));
+
+      setConversionProgress(prev => ({ ...prev, ...updates }));
+      if (jobFinished) onSilentRefresh();
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [files, onSilentRefresh]);
+
+  return (
+    <div className="app">
+      <div className="main-content">
+
+        {/* Header */}
+        <div className="toolbar">
+          <div className="toolbar-left">
+            <div className="toolbar-title">Game Recordings</div>
+            {!loading && (
+              <div className="toolbar-subtitle">
+                {displayFiles.length > 0
+                  ? `${displayFiles.length} recording${displayFiles.length !== 1 ? 's' : ''} found`
+                  : folder
+                    ? 'No recordings found'
+                    : 'No folder configured — open Settings to get started'}
               </div>
-            ) : displayFiles.length === 0 ? (
-              <div className="empty-state">
-                <IconFilm />
-                <p>
-                  {!folder
-                    ? 'Open Settings and set your Steam recordings folder to get started.'
-                    : tab === 'recordings'
-                      ? 'No recordings found.'
-                      : 'No processed recordings yet.'}
-                </p>
-              </div>
-            ) : (
-              <table className="files-table">
-                <thead>
-                  <tr>
-                    <th className="col-thumb" />
-                    <th className="col-game">Game</th>
-                    <th className="col-duration">Duration</th>
-                    <th className="col-resolution">Resolution</th>
-                    <th className="col-status">Status</th>
-                    <th className="col-progress">Progress</th>
-                    <th className="col-actions" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayFiles.map((file) => {
-                    const thumb = getThumbnail(file);
-                    // Use polled progress if available, otherwise use file data
-                    const fileWithProgress = {
-                      ...file,
-                      conversionProgress: conversionProgress[file.id] ?? file.conversionProgress,
-                    };
-                    return (
-                      <tr key={file.id}>
-                        <td className="col-thumb">
-                          <div className="thumb-container" onClick={() => setPreviewFile(file)}>
-                            {thumb ? (
-                              <img className="game-thumb" src={thumb} alt="" />
-                            ) : (
-                              <div className="game-thumb game-thumb-placeholder" />
-                            )}
-                            <IconPlay />
-                          </div>
-                        </td>
-                        <td className="col-game">
-                          <div className="game-name">{getGameName(file)}</div>
-                          <div className="file-meta">Session #{file.sessionIndex}</div>
-                        </td>
-                        <td className="col-duration">{file.duration}</td>
-                        <td className="col-resolution" style={{ color: 'var(--text-secondary)' }}>{file.resolution}</td>
-                        <td className="col-status">
-                          <StatusBadge status={file.status} errorMessage={file.status === 'error' && file.errorMessage ? file.errorMessage : undefined} />
-                        </td>
-                        <td className="col-progress"><ProgressCell file={fileWithProgress} /></td>
-                        <td className="col-actions">
-                          {!file.convertedPath ? (
-                            file.status === 'converting' ? (
-                              <button
-                                className="btn-icon"
-                                title="Abort Conversion"
-                                onClick={() => handleCancelConversion(file)}
-                                style={{ color: 'var(--danger)', opacity: 1 }}
-                              >
-                                <IconAbort />
-                              </button>
-                            ) : (
-                              <button
-                                className="btn-icon"
-                                title={file.status === 'error' ? 'Retry' : 'Convert'}
-                                onClick={() => handleConvertClick(file)}
-                              >
-                                {file.status === 'error' ? <IconRefresh /> : <IconProcess />}
-                              </button>
-                            )
-                          ) : (
-                            <>
-                              <button 
-                                className="btn-icon" 
-                                title={file.status === 'uploading' ? 'Uploading...' : 'Upload'}
-                                onClick={() => handleUploadClick(file)}
-                                disabled={file.status === 'uploading'}
-                                style={{ opacity: file.status === 'uploading' ? 0.6 : 1, cursor: file.status === 'uploading' ? 'not-allowed' : 'pointer' }}
-                              >
-                                {file.status === 'error' ? <IconRefresh /> : <IconUpload />}
-                              </button>
-                              {tab === 'processed' && (
-                                <ProcessedActionsMenu
-                                  file={file}
-                                  onDelete={() => handleDeleteProcessed(file)}
-                                  onDetails={() => handleShowDetails(file)}
-                                />
-                              )}
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
             )}
+          </div>
+          <div className="toolbar-right">
+            {folder && (
+              <span className="folder-path" title={folder}>{folder}</span>
+            )}
+            <button
+              className="btn btn-secondary"
+              onClick={onRefresh}
+              disabled={loading}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <IconRefresh />
+              {loading ? 'Scanning…' : 'Scan Folders'}
+            </button>
           </div>
         </div>
 
-        {previewFile && (
-          <VideoPreview
-            sessionId={previewFile.id}
-            videoDir={previewFile.videoDir}
-            title={`${getGameName(previewFile)} — Session #${previewFile.sessionIndex}`}
-            onClose={() => setPreviewFile(null)}
-          />
-        )}
+        {/* List */}
+        <div className="table-wrapper">
+          {loading ? (
+            <div className="empty-state">
+              <p style={{ color: 'var(--text-muted)' }}>Scanning folder...</p>
+            </div>
+          ) : displayFiles.length === 0 ? (
+            <div className="empty-state">
+              <IconFilm />
+              <p>
+                {!folder
+                  ? 'Open Settings and set your Steam recordings folder to get started.'
+                  : 'No recordings found.'}
+              </p>
+            </div>
+          ) : (
+            <div className="video-list">
+              {displayFiles.map((file) => {
+                const thumb = getThumbnail(file);
+                const progress = conversionProgress[file.id] ?? file.conversionProgress ?? 0;
+                const isGpu = gpuEncoder && gpuEncoder !== 'cpu';
+
+                return (
+                  <div className="video-card" key={file.id} data-status={file.status}>
+
+                    {/* Thumbnail */}
+                    <div className="vc-thumb" onClick={() => setPreviewFile(file)}>
+                      <img
+                        className="vc-img"
+                        src={thumb}
+                        alt=""
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = '/assets/steam-placeholder.png';
+                        }}
+                      />
+                      <span className="vc-duration">{file.duration}</span>
+                      <div className="vc-play"><IconPlay /></div>
+                    </div>
+
+                    {/* Body */}
+                    <div className="vc-body">
+                      <div className="vc-title">{getGameName(file)}</div>
+                      <div className="vc-meta">
+                        <span>{file.resolution}</span>
+                        <span className="vc-sep">•</span>
+                        <span>{formatRecordingDate(file.modifiedAt)}</span>
+                        <span className="vc-sep">•</span>
+                        <span className={`vc-status-${file.status}`}>
+                          {VC_STATUS_LABEL[file.status] ?? file.status}
+                        </span>
+                      </div>
+                      {(file.convertedPath || file.mpdPath) && (
+                        <div className="vc-path">{file.convertedPath || file.mpdPath}</div>
+                      )}
+
+                      {/* Progress bar (converting / uploading) */}
+                      {(file.status === 'converting' || file.status === 'uploading') && (
+                        <div className="vc-progress">
+                          <div className="vc-progress-top">
+                            <span className="vc-progress-label">
+                              {file.status === 'uploading'
+                                ? 'Uploading to YouTube'
+                                : isGpu ? '⚡ Processing (GPU)' : 'Processing video'}
+                            </span>
+                            <span className="vc-progress-pct">{Math.round(progress)}%</span>
+                          </div>
+                          <div className="vc-progress-bar">
+                            <div
+                              className={`vc-progress-fill ${
+                                file.status === 'uploading'
+                                  ? 'progress-fill-uploading'
+                                  : isGpu ? 'progress-fill-gpu' : 'progress-fill-converting'
+                              }`}
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Paused checkpoint note */}
+                      {file.status === 'paused' && (
+                        <div className="vc-paused-note">
+                          ⏸{' '}
+                          {file.pauseTimemark
+                            ? `Checkpoint at ${file.pauseTimemark.split('.')[0]}`
+                            : 'Paused'}
+                          {progress > 0 && ` — ${Math.round(progress)}% complete`}
+                        </div>
+                      )}
+
+                      {/* Error message */}
+                      {file.status === 'error' && file.errorMessage && (
+                        <div className="vc-error-msg">{file.errorMessage}</div>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="vc-actions">
+                      {file.status === 'converting' ? (
+                        <div className="vc-active-btns">
+                          <button className="btn-icon" title="Pause Conversion" onClick={() => handlePauseConversion(file)}>⏸</button>
+                          <button className="btn-icon" title="Abort Conversion" onClick={() => handleCancelConversion(file)} style={{ color: 'var(--error)' }}><IconAbort /></button>
+                        </div>
+                      ) : file.status === 'paused' ? (
+                        <div className="vc-active-btns">
+                          <button
+                            className="btn-action btn-action-primary"
+                            title={file.pauseTimemark ? `Resume from ${file.pauseTimemark.split('.')[0]}` : 'Resume'}
+                            onClick={() => handleResumeConversion(file)}
+                          >
+                            ▶ Resume
+                          </button>
+                          <button className="btn-icon" title="Abort Conversion" onClick={() => handleCancelConversion(file)} style={{ color: 'var(--error)' }}><IconAbort /></button>
+                        </div>
+                      ) : file.status === 'uploading' ? (
+                        <span className="vc-uploading-chip">Uploading…</span>
+                      ) : file.status === 'done' && file.youtubeVideoId ? (
+                        <>
+                          <button
+                            className="btn-action btn-action-youtube"
+                            onClick={() => window.api.openExternal(`https://www.youtube.com/watch?v=${file.youtubeVideoId}`)}
+                          >
+                            ▶ View on YouTube
+                          </button>
+                          <ProcessedActionsMenu
+                            file={file}
+                            onDelete={() => handleDeleteProcessed(file)}
+                            onDetails={() => handleShowDetails(file)}
+                            onShowInFolder={() => file.convertedPath && window.api.showItemInFolder(file.convertedPath)}
+                          />
+                        </>
+                      ) : file.status === 'done' && file.convertedPath ? (
+                        <>
+                          <button
+                            className="btn-action btn-action-primary"
+                            onClick={() => handleUploadClick(file)}
+                          >
+                            <IconUpload /> Upload to YouTube
+                          </button>
+                          <ProcessedActionsMenu
+                            file={file}
+                            onDelete={() => handleDeleteProcessed(file)}
+                            onDetails={() => handleShowDetails(file)}
+                            onShowInFolder={() => file.convertedPath && window.api.showItemInFolder(file.convertedPath)}
+                          />
+                        </>
+                      ) : file.status === 'error' ? (
+                        <button
+                          className="btn-action btn-action-danger"
+                          onClick={() => handleConvertClick(file)}
+                        >
+                          <IconRefresh /> Retry
+                        </button>
+                      ) : (
+                        <button
+                          className="btn-action btn-action-primary"
+                          onClick={() => handleConvertClick(file)}
+                        >
+                          <IconProcess /> Convert
+                        </button>
+                      )}
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
       </div>
-    );
-  }
+
+      {previewFile && (
+        <VideoPreview
+          sessionId={previewFile.id}
+          videoDir={previewFile.videoDir}
+          title={`${getGameName(previewFile)} — ${formatRecordingDate(previewFile.modifiedAt)}`}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+    </div>
+  );
+}

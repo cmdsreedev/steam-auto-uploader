@@ -139,7 +139,7 @@ export async function scanFolder(folderPath: string): Promise<VideoFile[]> {
     let gameInfo = null;
     try {
       gameInfo = await getGameInfo(appId);
-    } catch {}
+    } catch (e) { /* ignore if game info unavailable */ }
     if (gameInfo) {
       gameName = gameInfo.name || gameName;
       thumbnailUrl = gameInfo.thumbnailUrl || '';
@@ -160,7 +160,10 @@ export async function scanFolder(folderPath: string): Promise<VideoFile[]> {
       status,
       progress: status === 'done' ? 100 : 0,
       conversionProgress: dbRecord?.conversionProgress ?? 0,
+      pauseTimemark: dbRecord?.pauseTimemark,
       convertedPath,
+      youtubeVideoId: dbRecord?.youtubeVideoId,
+      errorMessage: dbRecord?.errorMessage,
       modifiedAt: mpdStat.mtimeMs,
     });
   }

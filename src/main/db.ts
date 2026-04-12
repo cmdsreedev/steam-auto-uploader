@@ -12,6 +12,7 @@ export interface SessionRecord {
   youtubeVideoId?: string;
   convertedPath?: string;
   conversionProgress?: number; // 0-100, tracks conversion progress
+  pauseTimemark?: string;       // e.g. "00:05:23.45" — saved when paused, used for partial resume
   errorMessage?: string; // error message for failed conversions
   updatedAt: number;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+// eslint-disable-next-line import/no-unresolved
 import * as dashjs from 'dashjs';
 
 export default function VideoPreview({ sessionId, videoDir, title, onClose }: {
